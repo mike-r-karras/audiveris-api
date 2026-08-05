@@ -1,0 +1,13 @@
+{
+  "dependencies": {
+    "fast-xml-parser": "^5.10.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "tsx": "^4.23.6",
+    "typescript": "^7.0.2"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
+  }
+}

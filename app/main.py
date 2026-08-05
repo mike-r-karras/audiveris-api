@@ -12,6 +12,8 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import musicxml_converter
+
 app = FastAPI()
 
 app.add_middleware(
@@ -144,8 +146,88 @@ async def run_audiveris(job_id: str, input_path: Path, output_dir: Path) -> None
 
         result_path = candidates[0]
 
+        # Save a copy of the MusicXML file to the app's output directory
+        app_output_dir = Path(__file__).parent / "output"
+        app_output_dir.mkdir(parents=True, exist_ok=True)
+
+        update_job(
+            job_id,
+            progress=92,
+            stage="saving-musicxml",
+            message="Saving MusicXML copy to output directory",
+        )
+        dest_musicxml_path = app_output_dir / result_path.name
+        shutil.copy(result_path, dest_musicxml_path)
+
+        # Convert to easyScore format
+        update_job(
+            job_id,
+            progress=95,
+            stage="converting-easyscore",
+            message="Converting MusicXML to easyScore",
+        )
+        filename = input_path.stem
+        ezs_path = app_output_dir / f"{filename}.ezs"
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            musicxml_converter.convert_musicxml_file,
+            result_path,
+            ezs_path,
+        )
+
         job = jobs[job_id]
-        job.resultPath = str(result_path)
+        job.resultPath = str(ezs_path)
+
+        update_job(
+            job_id,
+            progress=100,
+            stage="completed",
+            message="Conversion completed",
+            status="completed",
+        )
+
+    except Exception as exc:
+        job = jobs[job_id]
+        job.status = "failed"
+        job.stage = "failed"
+        job.message = "Conversion failed"
+        job.error = str(exc)
+
+
+async def run_musicxml_conversion(job_id: str, input_path: Path) -> None:
+    try:
+        update_job(
+            job_id,
+            progress=20,
+            stage="preparing",
+            message="Preparing uploaded MusicXML",
+        )
+        await asyncio.sleep(0.1)
+
+        app_output_dir = Path(__file__).parent / "output"
+        app_output_dir.mkdir(parents=True, exist_ok=True)
+
+        update_job(
+            job_id,
+            progress=50,
+            stage="converting-easyscore",
+            message="Converting MusicXML to easyScore",
+        )
+
+        ezs_path = app_output_dir / f"{input_path.stem}.ezs"
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            musicxml_converter.convert_musicxml_file,
+            input_path,
+            ezs_path,
+        )
+
+        job = jobs[job_id]
+        job.resultPath = str(ezs_path)
 
         update_job(
             job_id,
@@ -165,9 +247,21 @@ async def run_audiveris(job_id: str, input_path: Path, output_dir: Path) -> None
 
 @app.post("/conversions", status_code=202)
 async def create_conversion(file: UploadFile = File(...)):
+    filename = file.filename or "score.pdf"
+    lower_filename = filename.lower()
+
+    is_pdf = lower_filename.endswith(".pdf")
+    is_xml = lower_filename.endswith((".xml", ".musicxml", ".mxl"))
+
+    if not is_pdf and not is_xml:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file format. Please upload PDF, XML, MusicXML, or MXL."
+        )
+
     job_id = str(uuid.uuid4())
     work_dir = Path(tempfile.mkdtemp(prefix=f"conversion-{job_id}-"))
-    input_path = work_dir / (file.filename or "score.pdf")
+    input_path = work_dir / filename
     output_dir = work_dir / "output"
 
     with input_path.open("wb") as destination:
@@ -181,13 +275,21 @@ async def create_conversion(file: UploadFile = File(...)):
         message="Conversion queued",
     )
 
-    asyncio.create_task(
-        run_audiveris(
-            job_id=job_id,
-            input_path=input_path,
-            output_dir=output_dir,
+    if is_pdf:
+        asyncio.create_task(
+            run_audiveris(
+                job_id=job_id,
+                input_path=input_path,
+                output_dir=output_dir,
+            )
         )
-    )
+    else:
+        asyncio.create_task(
+            run_musicxml_conversion(
+                job_id=job_id,
+                input_path=input_path,
+            )
+        )
 
     return {
         "jobId": job_id,
@@ -198,11 +300,24 @@ async def create_conversion(file: UploadFile = File(...)):
 
 
 @app.get("/conversions/{job_id}", response_model=ConversionJob)
-async def get_conversion(job_id: str):
+async def get_conversion(job_id: str, timeout: int = 30):
     job = jobs.get(job_id)
 
     if job is None:
         raise HTTPException(status_code=404, detail="Conversion not found")
+
+    if timeout <= 0 or job.status in ("completed", "failed"):
+        return job
+
+    start_time = asyncio.get_running_loop().time()
+    while job.status not in ("completed", "failed"):
+        elapsed = asyncio.get_running_loop().time() - start_time
+        if elapsed >= timeout:
+            break
+        await asyncio.sleep(0.5)
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Conversion not found")
 
     return job
 
@@ -232,10 +347,16 @@ async def get_conversion_result(job_id: str):
             detail="Conversion result is no longer available",
         )
 
+    result_path = Path(job.resultPath)
+    if result_path.suffix == ".ezs":
+        media_type = "application/json"
+    else:
+        media_type = "application/vnd.recordare.musicxml+xml"
+
     return FileResponse(
         job.resultPath,
-        media_type="application/vnd.recordare.musicxml+xml",
-        filename=Path(job.resultPath).name,
+        media_type=media_type,
+        filename=result_path.name,
     )
 @app.get("/health")
 async def health():
