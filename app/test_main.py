@@ -439,3 +439,63 @@ def test_converter_does_not_auto_normalize_tied_terminal_note():
     warning_codes = {warning["code"] for warning in result["warnings"]}
     assert "MEASURE_AUTO_NORMALIZED" not in warning_codes
     assert "MEASURE_OVERFULL" in warning_codes
+
+
+def test_musicxml_metadata_and_tempo_events():
+    from musicxml_converter import convert_musicxml
+
+    xml = '''<?xml version="1.0" encoding="UTF-8"?>
+    <score-partwise version="4.0">
+      <work><work-title>Example Song</work-title></work>
+      <movement-title>First Movement</movement-title>
+      <identification>
+        <creator type="composer">Composer Name</creator>
+        <creator type="arranger">Arranger Name</creator>
+        <creator type="lyricist">Lyricist Name</creator>
+        <rights>Copyright 2026 Example</rights>
+        <miscellaneous>
+          <miscellaneous-field name="year">1810</miscellaneous-field>
+          <miscellaneous-field name="genre">Classical</miscellaneous-field>
+        </miscellaneous>
+      </identification>
+      <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+      <part id="P1">
+        <measure number="1">
+          <attributes><divisions>2</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>
+          <direction>
+            <direction-type>
+              <words>Poco moto</words>
+              <metronome><beat-unit>quarter</beat-unit><per-minute>72</per-minute></metronome>
+            </direction-type>
+            <sound tempo="72"/>
+          </direction>
+          <note><rest/><duration>8</duration><voice>1</voice><type>whole</type></note>
+        </measure>
+        <measure number="2">
+          <direction>
+            <direction-type><words>Più mosso</words></direction-type>
+            <sound tempo="96"/>
+          </direction>
+          <note><rest/><duration>8</duration><voice>1</voice><type>whole</type></note>
+        </measure>
+      </part>
+    </score-partwise>'''
+
+    result = convert_musicxml(xml)
+    metadata = result["metadata"]
+    assert result["schemaVersion"] == "1.1"
+    assert metadata == {
+        "title": "Example Song",
+        "movementTitle": "First Movement",
+        "composer": "Composer Name",
+        "arranger": "Arranger Name",
+        "lyricist": "Lyricist Name",
+        "copyright": "Copyright 2026 Example",
+        "year": 1810,
+        "genre": "Classical",
+        "bpm": 72.0,
+        "tempoText": "Poco moto",
+    }
+    assert result["parts"][0]["measures"][0]["tempoEvents"][0]["bpm"] == 72.0
+    assert result["parts"][0]["measures"][1]["tempoEvents"][0]["text"] == "Più mosso"
+    assert result["parts"][0]["measures"][1]["tempoEvents"][0]["bpm"] == 96.0

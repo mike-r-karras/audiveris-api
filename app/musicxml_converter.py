@@ -42,6 +42,13 @@ class ScoreMetadata:
     title: str | None = None
     movement_title: str | None = None
     composer: str | None = None
+    arranger: str | None = None
+    lyricist: str | None = None
+    copyright: str | None = None
+    year: int | None = None
+    genre: str | None = None
+    bpm: float | None = None
+    tempo_text: str | None = None
 
 
 @dataclass
@@ -146,11 +153,22 @@ class Voice:
 
 
 @dataclass
+class TempoEvent:
+    id: str
+    measure_number: int
+    start_divisions: int
+    start_quarter_notes: float
+    bpm: float | None = None
+    text: str | None = None
+
+
+@dataclass
 class Measure:
     id: str
     number: int
     attributes: MeasureAttributes
     voices: list[Voice] = field(default_factory=list)
+    tempo_events: list[TempoEvent] = field(default_factory=list)
 
 
 @dataclass
@@ -242,10 +260,19 @@ def convert_musicxml(xml: str | bytes) -> dict[str, Any]:
         warnings=warnings,
     )
 
+    metadata = read_metadata(root)
+    first_tempo = next(
+        (event for measure in part.measures for event in measure.tempo_events),
+        None,
+    )
+    if first_tempo is not None:
+        metadata.bpm = first_tempo.bpm
+        metadata.tempo_text = first_tempo.text
+
     score = NotestreamScore(
-        schema_version="1.0",
+        schema_version="1.1",
         source_format="musicxml",
-        metadata=read_metadata(root),
+        metadata=metadata,
         parts=[part],
         warnings=warnings,
     )
@@ -332,11 +359,27 @@ def convert_measure(
 
     cursor_divisions = 0
     event_sequence = 0
+    tempo_sequence = 0
+    tempo_events: list[TempoEvent] = []
     events_by_voice: dict[tuple[int, int], list[ScoreEvent]] = {}
     last_note_by_voice: dict[tuple[int, int], NoteEvent] = {}
     normalization_blocked_event_ids: set[str] = set()
 
     for child in list(measure_xml):
+        if child.tag == "direction":
+            tempo = read_tempo_event(
+                direction_xml=child,
+                part_id=part_id,
+                measure_number=measure_number,
+                sequence=tempo_sequence,
+                cursor_divisions=cursor_divisions,
+                divisions=attributes.divisions,
+            )
+            if tempo is not None:
+                tempo_events.append(tempo)
+                tempo_sequence += 1
+            continue
+
         if child.tag == "backup":
             duration = child_int(child, "duration")
             if duration is None or duration < 0:
@@ -558,6 +601,7 @@ def convert_measure(
         number=measure_number,
         attributes=attributes,
         voices=voices,
+        tempo_events=tempo_events,
     )
 
     return measure, deepcopy(attributes)
@@ -914,29 +958,94 @@ def read_metadata(root: ET.Element) -> ScoreMetadata:
     work_xml = root.find("work")
     identification_xml = root.find("identification")
 
-    title = (
-        child_text(work_xml, "work-title")
-        if work_xml is not None
-        else None
-    )
-
+    title = child_text(work_xml, "work-title") if work_xml is not None else None
     movement_title = child_text(root, "movement-title")
-    composer: str | None = None
+    creators: dict[str, str] = {}
+    copyright_text: str | None = None
+    year: int | None = None
+    genre: str | None = None
 
     if identification_xml is not None:
         for creator in identification_xml.findall("creator"):
-            creator_type = (
-                creator.get("type") or ""
-            ).strip().lower()
+            creator_type = (creator.get("type") or "").strip().lower()
+            creator_text = element_text(creator)
+            if creator_type and creator_text and creator_type not in creators:
+                creators[creator_type] = creator_text
 
-            if creator_type == "composer":
-                composer = element_text(creator)
-                break
+        rights = [
+            text for node in identification_xml.findall("rights")
+            if (text := element_text(node))
+        ]
+        copyright_text = "; ".join(rights) or None
+
+        miscellaneous = identification_xml.find("miscellaneous")
+        if miscellaneous is not None:
+            for field_xml in miscellaneous.findall("miscellaneous-field"):
+                name = (field_xml.get("name") or "").strip().lower()
+                value = element_text(field_xml)
+                if not value:
+                    continue
+                if name in {"year", "date", "composition-year", "composition year"}:
+                    match = re.search(r"\b(1[0-9]{3}|20[0-9]{2}|21[0-9]{2})\b", value)
+                    if match and year is None:
+                        year = int(match.group(1))
+                elif name in {"genre", "style"} and genre is None:
+                    genre = value
 
     return ScoreMetadata(
         title=title,
         movement_title=movement_title,
-        composer=composer,
+        composer=creators.get("composer"),
+        arranger=creators.get("arranger"),
+        lyricist=creators.get("lyricist") or creators.get("poet"),
+        copyright=copyright_text,
+        year=year,
+        genre=genre,
+    )
+
+
+def read_tempo_event(
+    direction_xml: ET.Element,
+    part_id: str,
+    measure_number: int,
+    sequence: int,
+    cursor_divisions: int,
+    divisions: int,
+) -> TempoEvent | None:
+    bpm: float | None = None
+    text_parts: list[str] = []
+
+    sound_xml = direction_xml.find("sound")
+    if sound_xml is not None:
+        bpm = parse_float(sound_xml.get("tempo"))
+        if bpm is not None and bpm <= 0:
+            bpm = None
+
+    for direction_type in direction_xml.findall("direction-type"):
+        for words_xml in direction_type.findall("words"):
+            words = element_text(words_xml)
+            if words:
+                text_parts.append(words)
+
+        for metronome_xml in direction_type.findall("metronome"):
+            per_minute = child_float(metronome_xml, "per-minute")
+            if per_minute is not None and per_minute > 0 and bpm is None:
+                bpm = per_minute
+
+    text = " ".join(dict.fromkeys(text_parts)) or None
+    if bpm is None and text is None:
+        return None
+
+    offset = child_int(direction_xml, "offset") or 0
+    start_divisions = max(0, cursor_divisions + offset)
+
+    return TempoEvent(
+        id=f"{part_id}-m{measure_number}-tempo-{sequence}",
+        measure_number=measure_number,
+        start_divisions=start_divisions,
+        start_quarter_notes=start_divisions / max(1, divisions),
+        bpm=bpm,
+        text=text,
     )
 
 
