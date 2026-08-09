@@ -110,6 +110,58 @@ class EventDuration:
 
 
 @dataclass
+class BeamMark:
+    number: int
+    value: str
+
+
+@dataclass
+class TieMark:
+    type: str
+
+
+@dataclass
+class SlurMark:
+    number: int
+    type: str
+
+
+@dataclass
+class PitchNotation:
+    ties: list[TieMark] = field(default_factory=list)
+    slurs: list[SlurMark] = field(default_factory=list)
+
+
+@dataclass
+class Ending:
+    number: str
+    type: str
+
+
+@dataclass
+class Repeat:
+    direction: str
+    times: int | None = None
+
+
+@dataclass
+class Barline:
+    location: str
+    style: str | None = None
+    ending: Ending | None = None
+    repeat: Repeat | None = None
+
+
+@dataclass
+class DifficultyAnalysis:
+    score: float
+    level: str
+    method: str
+    components: dict[str, float] = field(default_factory=dict)
+    metrics: dict[str, float | int] = field(default_factory=dict)
+
+
+@dataclass
 class NormalizationRecord:
     type: str
     confidence: float
@@ -134,6 +186,9 @@ class BaseEvent:
 class NoteEvent(BaseEvent):
     pitches: list[Pitch] = field(default_factory=list)
     accidentals: list[str | None] | None = None
+    stem: str | None = None
+    beams: list[BeamMark] = field(default_factory=list)
+    pitch_notations: list[PitchNotation] | None = None
 
 
 @dataclass
@@ -169,6 +224,7 @@ class Measure:
     attributes: MeasureAttributes
     voices: list[Voice] = field(default_factory=list)
     tempo_events: list[TempoEvent] = field(default_factory=list)
+    barlines: list[Barline] = field(default_factory=list)
 
 
 @dataclass
@@ -184,6 +240,7 @@ class NotestreamScore:
     source_format: str
     metadata: ScoreMetadata
     parts: list[Part]
+    difficulty: DifficultyAnalysis
     warnings: list[ConversionWarning]
 
 
@@ -202,14 +259,16 @@ def convert_musicxml(xml: str | bytes) -> dict[str, Any]:
     - staff-specific clefs
     - dots
     - written accidentals
+    - source stem directions
+    - source beam groups
+    - ties and slurs
+    - barlines, repeats and alternate endings
+    - deterministic heuristic difficulty analysis
 
     Deferred:
-    - ties
-    - beams
     - tuplets
     - lyrics
     - grace notes
-    - repeats
     """
     try:
         root = ET.fromstring(xml)
@@ -270,10 +329,11 @@ def convert_musicxml(xml: str | bytes) -> dict[str, Any]:
         metadata.tempo_text = first_tempo.text
 
     score = NotestreamScore(
-        schema_version="1.1",
+        schema_version="1.2",
         source_format="musicxml",
         metadata=metadata,
         parts=[part],
+        difficulty=calculate_difficulty(part, metadata),
         warnings=warnings,
     )
 
@@ -361,6 +421,11 @@ def convert_measure(
     event_sequence = 0
     tempo_sequence = 0
     tempo_events: list[TempoEvent] = []
+    barlines = [
+        barline
+        for barline_xml in measure_xml.findall("barline")
+        if (barline := read_barline(barline_xml)) is not None
+    ]
     events_by_voice: dict[tuple[int, int], list[ScoreEvent]] = {}
     last_note_by_voice: dict[tuple[int, int], NoteEvent] = {}
     normalization_blocked_event_ids: set[str] = set()
@@ -494,6 +559,7 @@ def convert_measure(
                 continue
 
             accidental = child_text(note_xml, "accidental")
+            pitch_notation = read_pitch_notation(note_xml)
             last_note_event.pitches.append(pitch)
             if last_note_event.accidentals is not None:
                 last_note_event.accidentals.append(accidental)
@@ -501,6 +567,19 @@ def convert_measure(
                 last_note_event.accidentals = [
                     None for _ in range(len(last_note_event.pitches) - 1)
                 ] + [accidental]
+
+            if last_note_event.pitch_notations is not None:
+                last_note_event.pitch_notations.append(pitch_notation)
+            elif pitch_notation.ties or pitch_notation.slurs:
+                last_note_event.pitch_notations = [
+                    PitchNotation()
+                    for _ in range(len(last_note_event.pitches) - 1)
+                ] + [pitch_notation]
+
+            if last_note_event.stem is None:
+                last_note_event.stem = read_stem(note_xml)
+            if not last_note_event.beams:
+                last_note_event.beams = read_beams(note_xml)
             continue
 
         event_sequence += 1
@@ -542,6 +621,7 @@ def convert_measure(
                 continue
 
             accidental = child_text(note_xml, "accidental")
+            pitch_notation = read_pitch_notation(note_xml)
             event = NoteEvent(
                 id=event_id,
                 type="note",
@@ -553,6 +633,13 @@ def convert_measure(
                 duration=duration,
                 pitches=[pitch],
                 accidentals=[accidental] if accidental is not None else None,
+                stem=read_stem(note_xml),
+                beams=read_beams(note_xml),
+                pitch_notations=(
+                    [pitch_notation]
+                    if pitch_notation.ties or pitch_notation.slurs
+                    else None
+                ),
             )
             last_note_by_voice[voice_key] = event
 
@@ -602,9 +689,95 @@ def convert_measure(
         attributes=attributes,
         voices=voices,
         tempo_events=tempo_events,
+        barlines=barlines,
     )
 
     return measure, deepcopy(attributes)
+
+
+
+def read_stem(note_xml: ET.Element) -> str | None:
+    value = child_text(note_xml, "stem")
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    valid = {"up", "down", "none", "double"}
+    return normalized if normalized in valid else value.strip()
+
+
+def read_beams(note_xml: ET.Element) -> list[BeamMark]:
+    result: list[BeamMark] = []
+    for beam_xml in note_xml.findall("beam"):
+        value = element_text(beam_xml)
+        if not value:
+            continue
+        result.append(
+            BeamMark(
+                number=max(1, parse_int(beam_xml.get("number")) or 1),
+                value=value.strip().lower(),
+            )
+        )
+    return result
+
+
+def read_pitch_notation(note_xml: ET.Element) -> PitchNotation:
+    ties: list[TieMark] = []
+    slurs: list[SlurMark] = []
+
+    tied_nodes = note_xml.findall("notations/tied")
+    tie_nodes = tied_nodes if tied_nodes else note_xml.findall("tie")
+    seen_ties: set[str] = set()
+    for tie_xml in tie_nodes:
+        tie_type = (tie_xml.get("type") or "").strip().lower()
+        if tie_type and tie_type not in seen_ties:
+            ties.append(TieMark(type=tie_type))
+            seen_ties.add(tie_type)
+
+    seen_slurs: set[tuple[int, str]] = set()
+    for slur_xml in note_xml.findall("notations/slur"):
+        slur_type = (slur_xml.get("type") or "").strip().lower()
+        if not slur_type:
+            continue
+        number = max(1, parse_int(slur_xml.get("number")) or 1)
+        key = (number, slur_type)
+        if key not in seen_slurs:
+            slurs.append(SlurMark(number=number, type=slur_type))
+            seen_slurs.add(key)
+
+    return PitchNotation(ties=ties, slurs=slurs)
+
+
+def read_barline(barline_xml: ET.Element) -> Barline | None:
+    location = (barline_xml.get("location") or "right").strip().lower()
+    style = child_text(barline_xml, "bar-style")
+
+    ending: Ending | None = None
+    ending_xml = barline_xml.find("ending")
+    if ending_xml is not None:
+        number = (ending_xml.get("number") or "").strip()
+        ending_type = (ending_xml.get("type") or "").strip().lower()
+        if number and ending_type:
+            ending = Ending(number=number, type=ending_type)
+
+    repeat: Repeat | None = None
+    repeat_xml = barline_xml.find("repeat")
+    if repeat_xml is not None:
+        direction = (repeat_xml.get("direction") or "").strip().lower()
+        if direction:
+            repeat = Repeat(
+                direction=direction,
+                times=parse_int(repeat_xml.get("times")),
+            )
+
+    if style is None and ending is None and repeat is None:
+        return None
+
+    return Barline(
+        location=location,
+        style=style,
+        ending=ending,
+        repeat=repeat,
+    )
 
 
 def normalize_measure_duration(
@@ -952,6 +1125,182 @@ def calculate_dot_multiplier(dots: int) -> float:
         addition /= 2
 
     return multiplier
+
+
+
+def clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def pitch_to_midi(pitch: Pitch) -> float:
+    semitones = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+    return 12 * (pitch.octave + 1) + semitones[pitch.step] + pitch.alter
+
+
+def measure_nominal_quarter_notes(measure: Measure) -> float:
+    time = measure.attributes.time
+    if time is not None and time.beat_type > 0:
+        return time.beats * 4 / time.beat_type
+    ends = [
+        event.start_quarter_notes + event.duration.quarter_notes
+        for voice in measure.voices
+        for event in voice.events
+    ]
+    return max(ends, default=0.0)
+
+
+def calculate_difficulty(part: Part, metadata: ScoreMetadata) -> DifficultyAnalysis:
+    """Estimate playing difficulty on an explainable 1-10 heuristic scale."""
+    note_events = [
+        event
+        for measure in part.measures
+        for voice in measure.voices
+        for event in voice.events
+        if isinstance(event, NoteEvent)
+    ]
+    if not note_events:
+        return DifficultyAnalysis(
+            score=1.0,
+            level="beginner",
+            method="notestream-heuristic-v1",
+            components={key: 0.0 for key in (
+                "rhythm", "pitch", "accidentals", "polyphony",
+                "handIndependence", "density", "tempo"
+            )},
+            metrics={"noteEvents": 0, "totalQuarterNotes": 0.0},
+        )
+
+    total_quarters = max(
+        0.25,
+        sum(max(0.0, measure_nominal_quarter_notes(m)) for m in part.measures),
+    )
+    short_events = sum(
+        event.duration.quarter_notes <= 0.25 + 1e-9 for event in note_events
+    )
+    dotted_events = sum(event.duration.dots > 0 for event in note_events)
+    beamed_events = sum(bool(event.beams) for event in note_events)
+
+    pitch_values = [
+        pitch_to_midi(pitch)
+        for event in note_events
+        for pitch in event.pitches
+    ]
+    pitch_range = max(pitch_values) - min(pitch_values) if len(pitch_values) >= 2 else 0.0
+
+    large_jumps = 0
+    melodic_intervals = 0
+    for measure in part.measures:
+        for voice in measure.voices:
+            pitched = [
+                event for event in voice.events
+                if isinstance(event, NoteEvent) and event.pitches
+            ]
+            for previous, current in zip(pitched, pitched[1:]):
+                melodic_intervals += 1
+                prev_pitch = sum(pitch_to_midi(p) for p in previous.pitches) / len(previous.pitches)
+                curr_pitch = sum(pitch_to_midi(p) for p in current.pitches) / len(current.pitches)
+                if abs(curr_pitch - prev_pitch) >= 7:
+                    large_jumps += 1
+
+    accidental_count = sum(
+        1
+        for event in note_events
+        for accidental in (event.accidentals or [])
+        if accidental is not None
+    )
+    pitch_count = max(1, sum(len(event.pitches) for event in note_events))
+    max_chord_size = max((len(event.pitches) for event in note_events), default=1)
+
+    overlap_quarters = 0.0
+    for measure in part.measures:
+        staff_spans: dict[int, list[tuple[float, float]]] = {}
+        for voice in measure.voices:
+            spans = staff_spans.setdefault(voice.staff, [])
+            for event in voice.events:
+                if isinstance(event, NoteEvent):
+                    spans.append((
+                        event.start_quarter_notes,
+                        event.start_quarter_notes + event.duration.quarter_notes,
+                    ))
+        staffs = sorted(staff_spans)
+        if len(staffs) >= 2:
+            for a_start, a_end in staff_spans[staffs[0]]:
+                for b_start, b_end in staff_spans[staffs[1]]:
+                    overlap_quarters += max(0.0, min(a_end, b_end) - max(a_start, b_start))
+
+    max_voices_same_staff = 1
+    for measure in part.measures:
+        counts: dict[int, int] = {}
+        for voice in measure.voices:
+            counts[voice.staff] = counts.get(voice.staff, 0) + 1
+        if counts:
+            max_voices_same_staff = max(max_voices_same_staff, max(counts.values()))
+
+    notes_per_quarter = len(note_events) / total_quarters
+    short_ratio = short_events / len(note_events)
+    dotted_ratio = dotted_events / len(note_events)
+    beamed_ratio = beamed_events / len(note_events)
+    large_jump_ratio = large_jumps / max(1, melodic_intervals)
+    accidental_ratio = accidental_count / pitch_count
+    hand_overlap_ratio = clamp01(overlap_quarters / total_quarters)
+
+    rhythm_component = clamp01(short_ratio * 0.70 + dotted_ratio * 0.15 + beamed_ratio * 0.15)
+    pitch_component = clamp01(min(pitch_range / 36.0, 1.0) * 0.60 + large_jump_ratio * 0.40)
+    accidental_component = clamp01(accidental_ratio * 3.0)
+    polyphony_component = clamp01(
+        ((max_chord_size - 1) / 4.0) * 0.55
+        + ((max_voices_same_staff - 1) / 2.0) * 0.45
+    )
+    hand_component = hand_overlap_ratio
+    density_component = clamp01(notes_per_quarter / 3.0)
+    tempo_component = 0.30 if metadata.bpm is None else clamp01((metadata.bpm - 50.0) / 130.0)
+
+    components = {
+        "rhythm": rhythm_component,
+        "pitch": pitch_component,
+        "accidentals": accidental_component,
+        "polyphony": polyphony_component,
+        "handIndependence": hand_component,
+        "density": density_component,
+        "tempo": tempo_component,
+    }
+    weighted = (
+        rhythm_component * 0.23
+        + pitch_component * 0.16
+        + accidental_component * 0.12
+        + polyphony_component * 0.15
+        + hand_component * 0.14
+        + density_component * 0.12
+        + tempo_component * 0.08
+    )
+    score = round(1.0 + 9.0 * clamp01(weighted), 1)
+    level = (
+        "beginner" if score <= 2.5
+        else "elementary" if score <= 4.5
+        else "intermediate" if score <= 6.5
+        else "advanced" if score <= 8.0
+        else "expert"
+    )
+    return DifficultyAnalysis(
+        score=score,
+        level=level,
+        method="notestream-heuristic-v1",
+        components={key: round(value, 3) for key, value in components.items()},
+        metrics={
+            "noteEvents": len(note_events),
+            "pitchCount": pitch_count,
+            "totalQuarterNotes": round(total_quarters, 3),
+            "notesPerQuarter": round(notes_per_quarter, 3),
+            "shortNoteRatio": round(short_ratio, 3),
+            "writtenAccidentals": accidental_count,
+            "pitchRangeSemitones": round(pitch_range, 1),
+            "largeJumpRatio": round(large_jump_ratio, 3),
+            "maxChordSize": max_chord_size,
+            "maxVoicesPerStaff": max_voices_same_staff,
+            "staffOverlapRatio": round(hand_overlap_ratio, 3),
+            "bpm": round(metadata.bpm, 2) if metadata.bpm is not None else 0,
+        },
+    )
 
 
 def read_metadata(root: ET.Element) -> ScoreMetadata:
