@@ -6,8 +6,15 @@ RUN apt-get update && \
         unzip \
         python3 \
         python3-pip \
-	poppler-utils && \
+	poppler-utils \
+	tesseract-ocr-eng && \
     rm -rf /var/lib/apt/lists/*
+
+# Audiveris requests Tesseract's legacy engine. Ubuntu's English package is
+# LSTM-only, so install the combined legacy/LSTM 4.1 model explicitly.
+RUN wget -q \
+    https://github.com/tesseract-ocr/tessdata/raw/4.1.0/eng.traineddata \
+    -O /usr/share/tesseract-ocr/5/tessdata/eng.traineddata
 
 WORKDIR /opt
 
@@ -15,6 +22,7 @@ RUN wget https://github.com/Audiveris/audiveris/releases/download/5.10.2/Audiver
  && dpkg-deb -x Audiveris-5.10.2-ubuntu24.04-x86_64.deb /opt/audiveris
 
 ENV AUDIVERIS_HOME=/opt/Audiveris
+ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 
 COPY requirements.txt .
 

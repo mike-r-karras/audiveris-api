@@ -133,6 +133,19 @@ class PitchNotation:
 
 
 @dataclass
+class Lyric:
+    number: str
+    text: str | None = None
+    name: str | None = None
+    syllabic: str | None = None
+    extend: str | None = None
+    elision: str | None = None
+    placement: str | None = None
+    end_line: bool | None = None
+    end_paragraph: bool | None = None
+
+
+@dataclass
 class Ending:
     number: str
     type: str
@@ -189,6 +202,7 @@ class NoteEvent(BaseEvent):
     stem: str | None = None
     beams: list[BeamMark] = field(default_factory=list)
     pitch_notations: list[PitchNotation] | None = None
+    lyrics: list[Lyric] = field(default_factory=list)
 
 
 @dataclass
@@ -249,7 +263,7 @@ def convert_musicxml(xml: str | bytes) -> dict[str, Any]:
     Convert score-partwise MusicXML into Notestream JSON-compatible data.
 
     Current scope:
-    - first part only
+    - multiple parts in source order
     - multiple staves and voices
     - backup / forward timing
     - notes, rests and chords
@@ -262,12 +276,12 @@ def convert_musicxml(xml: str | bytes) -> dict[str, Any]:
     - source stem directions
     - source beam groups
     - ties and slurs
+    - note-attached lyrics, verses, syllabification and melismas
     - barlines, repeats and alternate endings
     - deterministic heuristic difficulty analysis
 
     Deferred:
     - tuplets
-    - lyrics
     - grace notes
     """
     try:
@@ -297,31 +311,27 @@ def convert_musicxml(xml: str | bytes) -> dict[str, Any]:
             "The MusicXML document does not contain any parts."
         )
 
-    if len(parts_xml) > 1:
-        warnings.append(
-            ConversionWarning(
-                code="MULTIPLE_PARTS_IGNORED",
-                message=(
-                    f"The score contains {len(parts_xml)} parts. "
-                    "Converter version 1 only converts the first part."
-                ),
+    part_names = read_part_names(root)
+    parts = []
+    for index, part_xml in enumerate(parts_xml):
+        part_id = part_xml.get("id") or f"P{index + 1}"
+        parts.append(
+            convert_part(
+                part_xml=part_xml,
+                part_id=part_id,
+                part_name=part_names.get(part_id),
+                warnings=warnings,
             )
         )
 
-    part_names = read_part_names(root)
-    first_part_xml = parts_xml[0]
-    part_id = first_part_xml.get("id") or "P1"
-
-    part = convert_part(
-        part_xml=first_part_xml,
-        part_id=part_id,
-        part_name=part_names.get(part_id),
-        warnings=warnings,
-    )
-
     metadata = read_metadata(root)
     first_tempo = next(
-        (event for measure in part.measures for event in measure.tempo_events),
+        (
+            event
+            for part in parts
+            for measure in part.measures
+            for event in measure.tempo_events
+        ),
         None,
     )
     if first_tempo is not None:
@@ -332,8 +342,8 @@ def convert_musicxml(xml: str | bytes) -> dict[str, Any]:
         schema_version="1.2",
         source_format="musicxml",
         metadata=metadata,
-        parts=[part],
-        difficulty=calculate_difficulty(part, metadata),
+        parts=parts,
+        difficulty=calculate_difficulty(parts[0], metadata),
         warnings=warnings,
     )
 
@@ -580,6 +590,15 @@ def convert_measure(
                 last_note_event.stem = read_stem(note_xml)
             if not last_note_event.beams:
                 last_note_event.beams = read_beams(note_xml)
+            merge_lyrics(
+                event=last_note_event,
+                lyrics=read_lyrics(
+                    note_xml=note_xml,
+                    part_id=part_id,
+                    measure_number=measure_number,
+                    warnings=warnings,
+                ),
+            )
             continue
 
         event_sequence += 1
@@ -591,6 +610,15 @@ def convert_measure(
         start_quarter_notes = cursor_divisions / attributes.divisions
 
         if is_rest:
+            if note_xml.findall("lyric"):
+                warnings.append(
+                    ConversionWarning(
+                        code="LYRIC_ON_REST_IGNORED",
+                        message="A lyric attached to a rest was ignored.",
+                        part_id=part_id,
+                        measure_number=measure_number,
+                    )
+                )
             event: ScoreEvent = RestEvent(
                 id=event_id,
                 type="rest",
@@ -639,6 +667,12 @@ def convert_measure(
                     [pitch_notation]
                     if pitch_notation.ties or pitch_notation.slurs
                     else None
+                ),
+                lyrics=read_lyrics(
+                    note_xml=note_xml,
+                    part_id=part_id,
+                    measure_number=measure_number,
+                    warnings=warnings,
                 ),
             )
             last_note_by_voice[voice_key] = event
@@ -745,6 +779,111 @@ def read_pitch_notation(note_xml: ET.Element) -> PitchNotation:
             seen_slurs.add(key)
 
     return PitchNotation(ties=ties, slurs=slurs)
+
+
+def read_lyrics(
+    note_xml: ET.Element,
+    part_id: str,
+    measure_number: int,
+    warnings: list[ConversionWarning],
+) -> list[Lyric]:
+    lyrics: list[Lyric] = []
+
+    for lyric_xml in note_xml.findall("lyric"):
+        number = (lyric_xml.get("number") or "1").strip() or "1"
+        name = normalized_attribute(lyric_xml, "name")
+        placement = normalized_attribute(lyric_xml, "placement")
+        syllabic = child_text(lyric_xml, "syllabic")
+        if syllabic is not None:
+            syllabic = syllabic.strip().lower()
+
+        text_nodes = lyric_xml.findall("text")
+        text_parts = [
+            text
+            for text_xml in text_nodes
+            if (text := lyric_component_text(text_xml)) is not None
+        ]
+        elision_nodes = lyric_xml.findall("elision")
+        elisions = [
+            text
+            for elision_xml in elision_nodes
+            if (text := lyric_component_text(elision_xml)) is not None
+        ]
+        elision = "".join(elisions) or None
+
+        if len(text_parts) <= 1:
+            text = text_parts[0] if text_parts else None
+        else:
+            separators = elisions + [""] * (len(text_parts) - 1 - len(elisions))
+            text = text_parts[0] + "".join(
+                separator + part
+                for separator, part in zip(separators, text_parts[1:])
+            )
+
+        extend_xml = lyric_xml.find("extend")
+        extend = None
+        if extend_xml is not None:
+            extend = (extend_xml.get("type") or "start").strip().lower() or "start"
+
+        end_line = lyric_xml.find("end-line") is not None
+        end_paragraph = lyric_xml.find("end-paragraph") is not None
+
+        if text is None and extend is None and not end_line and not end_paragraph:
+            warnings.append(
+                ConversionWarning(
+                    code="EMPTY_LYRIC_IGNORED",
+                    message="A lyric without text or structural markers was ignored.",
+                    part_id=part_id,
+                    measure_number=measure_number,
+                )
+            )
+            continue
+
+        lyrics.append(
+            Lyric(
+                number=number,
+                text=text,
+                name=name,
+                syllabic=syllabic,
+                extend=extend,
+                elision=elision,
+                placement=placement,
+                end_line=True if end_line else None,
+                end_paragraph=True if end_paragraph else None,
+            )
+        )
+
+    return lyrics
+
+
+def merge_lyrics(event: NoteEvent, lyrics: list[Lyric]) -> None:
+    """Merge chord-tone lyrics onto the logical chord without duplication."""
+    for lyric in lyrics:
+        is_duplicate = any(
+            existing.number == lyric.number
+            and existing.text == lyric.text
+            and existing.syllabic == lyric.syllabic
+            and existing.extend == lyric.extend
+            for existing in event.lyrics
+        )
+        if not is_duplicate:
+            event.lyrics.append(lyric)
+
+
+def normalized_attribute(element: ET.Element, name: str) -> str | None:
+    value = element.get(name)
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def lyric_component_text(element: ET.Element) -> str | None:
+    text = "".join(element.itertext())
+    if not text.strip():
+        return None
+    xml_space = element.get("{http://www.w3.org/XML/1998/namespace}space")
+    return text if xml_space == "preserve" else text.strip()
 
 
 def read_barline(barline_xml: ET.Element) -> Barline | None:

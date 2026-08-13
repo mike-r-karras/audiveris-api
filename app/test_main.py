@@ -185,7 +185,7 @@ async def test_run_audiveris_success():
 
         # Verify the easyScore JSON structure
         ezs_data = json.loads(copied_ezs.read_text(encoding="utf-8"))
-        assert ezs_data["schemaVersion"] == "1.0"
+        assert ezs_data["schemaVersion"] == "1.2"
         assert ezs_data["sourceFormat"] == "musicxml"
         assert "parts" in ezs_data
         assert len(ezs_data["parts"]) == 1
@@ -198,7 +198,7 @@ async def test_run_audiveris_success():
         
         # Verify result contents
         result_json = response.json()
-        assert result_json["schemaVersion"] == "1.0"
+        assert result_json["schemaVersion"] == "1.2"
 
 
 @pytest.mark.asyncio
@@ -375,6 +375,81 @@ def test_converter_supports_multistaff_multivoice_backup_forward():
     assert "COMPLEX_MEASURE_TIMING" not in warning_codes
 
 
+def test_converter_preserves_all_parts_and_piano_accompaniment():
+    from musicxml_converter import convert_musicxml
+
+    xml = """<?xml version="1.0"?>
+    <score-partwise version="4.0">
+      <part-list>
+        <score-part id="P1"><part-name>Voice</part-name></score-part>
+        <score-part id="P2"><part-name>Piano</part-name></score-part>
+      </part-list>
+      <part id="P1">
+        <measure number="1">
+          <attributes>
+            <divisions>1</divisions>
+            <time><beats>3</beats><beat-type>4</beat-type></time>
+            <clef><sign>G</sign><line>2</line></clef>
+          </attributes>
+          <note>
+            <pitch><step>C</step><octave>5</octave></pitch>
+            <duration>1</duration><voice>1</voice><staff>1</staff>
+            <type>quarter</type>
+            <lyric number="1"><syllabic>single</syllabic><text>O</text></lyric>
+          </note>
+        </measure>
+      </part>
+      <part id="P2">
+        <measure number="1">
+          <attributes>
+            <divisions>2</divisions>
+            <time><beats>3</beats><beat-type>4</beat-type></time>
+            <staves>2</staves>
+            <clef number="1"><sign>G</sign><line>2</line></clef>
+            <clef number="2"><sign>F</sign><line>4</line></clef>
+          </attributes>
+          <direction><sound tempo="96"/></direction>
+          <note>
+            <pitch><step>E</step><octave>4</octave></pitch>
+            <duration>6</duration><voice>1</voice><staff>1</staff><type>half</type>
+          </note>
+          <backup><duration>6</duration></backup>
+          <note>
+            <pitch><step>C</step><octave>3</octave></pitch>
+            <duration>6</duration><voice>2</voice><staff>2</staff><type>half</type>
+          </note>
+        </measure>
+      </part>
+    </score-partwise>"""
+
+    result = convert_musicxml(xml)
+
+    assert [(part["id"], part["name"]) for part in result["parts"]] == [
+        ("P1", "Voice"),
+        ("P2", "Piano"),
+    ]
+    voice_event = result["parts"][0]["measures"][0]["voices"][0]["events"][0]
+    assert voice_event["lyrics"][0]["text"] == "O"
+
+    piano_measure = result["parts"][1]["measures"][0]
+    assert piano_measure["attributes"]["divisions"] == 2
+    assert piano_measure["attributes"]["clefs"]["2"]["sign"] == "F"
+    assert {(voice["staff"], voice["number"]) for voice in piano_measure["voices"]} == {
+        (1, 1),
+        (2, 2),
+    }
+    piano_event_ids = {
+        event["id"]
+        for voice in piano_measure["voices"]
+        for event in voice["events"]
+    }
+    assert all(event_id.startswith("P2-") for event_id in piano_event_ids)
+    assert result["metadata"]["bpm"] == 96.0
+    assert "MULTIPLE_PARTS_IGNORED" not in {
+        warning["code"] for warning in result.get("warnings", [])
+    }
+
+
 def test_converter_auto_normalizes_terminal_overfull_note():
     from musicxml_converter import convert_musicxml
 
@@ -483,7 +558,7 @@ def test_musicxml_metadata_and_tempo_events():
 
     result = convert_musicxml(xml)
     metadata = result["metadata"]
-    assert result["schemaVersion"] == "1.1"
+    assert result["schemaVersion"] == "1.2"
     assert metadata == {
         "title": "Example Song",
         "movementTitle": "First Movement",
@@ -499,3 +574,140 @@ def test_musicxml_metadata_and_tempo_events():
     assert result["parts"][0]["measures"][0]["tempoEvents"][0]["bpm"] == 72.0
     assert result["parts"][0]["measures"][1]["tempoEvents"][0]["text"] == "Più mosso"
     assert result["parts"][0]["measures"][1]["tempoEvents"][0]["bpm"] == 96.0
+
+
+LYRIC_MUSICXML = '''<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <staves>2</staves>
+      </attributes>
+      <note>
+        <pitch><step>C</step><octave>5</octave></pitch>
+        <duration>1</duration><voice>1</voice><staff>1</staff><type>quarter</type>
+        <lyric number="1" name="English" placement="below">
+          <syllabic>begin</syllabic><text>Christ</text>
+        </lyric>
+        <lyric number="2"><syllabic>single</syllabic><text xml:space="preserve"> Ô </text></lyric>
+      </note>
+      <note>
+        <pitch><step>E</step><octave>5</octave></pitch>
+        <duration>1</duration><voice>1</voice><staff>1</staff><type>quarter</type>
+        <lyric number="1">
+          <syllabic>end</syllabic><text>mas</text><extend type="start"/>
+        </lyric>
+      </note>
+      <note>
+        <pitch><step>G</step><octave>5</octave></pitch>
+        <duration>1</duration><voice>1</voice><staff>1</staff><type>quarter</type>
+        <lyric number="1">
+          <syllabic>single</syllabic><text>tree</text><elision>‿</elision><text>bright</text>
+          <end-line/>
+        </lyric>
+      </note>
+      <note>
+        <rest/><duration>1</duration><voice>1</voice><staff>1</staff><type>quarter</type>
+        <lyric number="1"><text>ignored</text></lyric>
+      </note>
+      <backup><duration>4</duration></backup>
+      <note>
+        <pitch><step>C</step><octave>3</octave></pitch>
+        <duration>4</duration><voice>2</voice><staff>2</staff><type>whole</type>
+      </note>
+    </measure>
+  </part>
+</score-partwise>'''
+
+
+def test_converter_preserves_note_attached_lyrics():
+    from musicxml_converter import convert_musicxml
+
+    result = convert_musicxml(LYRIC_MUSICXML)
+    voices = result["parts"][0]["measures"][0]["voices"]
+    melody = next(voice for voice in voices if voice["staff"] == 1)
+    first, second, third, rest = melody["events"]
+
+    assert first["lyrics"] == [
+        {
+            "number": "1",
+            "text": "Christ",
+            "name": "English",
+            "syllabic": "begin",
+            "placement": "below",
+        },
+        {"number": "2", "text": " Ô ", "syllabic": "single"},
+    ]
+    assert second["lyrics"] == [
+        {
+            "number": "1",
+            "text": "mas",
+            "syllabic": "end",
+            "extend": "start",
+        }
+    ]
+    assert third["lyrics"] == [
+        {
+            "number": "1",
+            "text": "tree‿bright",
+            "syllabic": "single",
+            "elision": "‿",
+            "endLine": True,
+        }
+    ]
+    assert "lyrics" not in rest
+    assert "LYRIC_ON_REST_IGNORED" in {
+        warning["code"] for warning in result["warnings"]
+    }
+
+
+def test_converter_merges_chord_tone_lyrics_without_duplicates():
+    from musicxml_converter import convert_musicxml
+
+    xml = LYRIC_MUSICXML.replace(
+        '<duration>1</duration><voice>1</voice><staff>1</staff><type>quarter</type>\n'
+        '        <lyric number="1">\n'
+        '          <syllabic>end</syllabic><text>mas</text><extend type="start"/>',
+        '<chord/><duration>1</duration><voice>1</voice><staff>1</staff><type>quarter</type>\n'
+        '        <lyric number="1">\n'
+        '          <syllabic>begin</syllabic><text>Christ</text>',
+        1,
+    )
+
+    result = convert_musicxml(xml)
+    melody = next(
+        voice
+        for voice in result["parts"][0]["measures"][0]["voices"]
+        if voice["staff"] == 1
+    )
+    chord = melody["events"][0]
+
+    assert len(chord["pitches"]) == 2
+    assert chord["lyrics"][0]["text"] == "Christ"
+    assert len(chord["lyrics"]) == 2
+
+
+def test_compressed_mxl_preserves_lyrics(tmp_path):
+    import zipfile
+    from musicxml_converter import convert_musicxml_file
+
+    mxl_path = tmp_path / "lyrics.mxl"
+    with zipfile.ZipFile(mxl_path, "w") as archive:
+        archive.writestr(
+            "META-INF/container.xml",
+            '''<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+              <rootfiles><rootfile full-path="score.musicxml"/></rootfiles>
+            </container>''',
+        )
+        archive.writestr("score.musicxml", LYRIC_MUSICXML)
+
+    result = convert_musicxml_file(mxl_path)
+    melody = next(
+        voice
+        for voice in result["parts"][0]["measures"][0]["voices"]
+        if voice["staff"] == 1
+    )
+    assert melody["events"][0]["lyrics"][0]["text"] == "Christ"
