@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://notestream.app/schemas/pdf-source-layout-1.0.schema.json",
+  "title": "Notestream PDF Source Layout",
+  "type": "object",
+  "required": ["schemaVersion", "sourceFormat", "sourceFilename", "extractor", "pages", "warnings"],
+  "properties": {
+    "schemaVersion": { "const": "pdf-source-layout-1.0" },
+    "sourceFormat": { "const": "pdf" },
+    "sourceFilename": { "type": "string", "minLength": 1 },
+    "extractor": {
+      "type": "object",
+      "required": ["name", "mode"],
+      "properties": {
+        "name": { "type": "string" },
+        "mode": { "const": "bbox-layout" }
+      },
+      "additionalProperties": false
+    },
+    "metadata": { "type": "object", "additionalProperties": { "type": "string" } },
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/page" }
+    },
+    "warnings": { "type": "array", "items": { "type": "object" } }
+  },
+  "$defs": {
+    "box": {
+      "type": "object",
+      "required": ["xMin", "yMin", "xMax", "yMax"],
+      "properties": {
+        "xMin": { "type": "number" },
+        "yMin": { "type": "number" },
+        "xMax": { "type": "number" },
+        "yMax": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "word": {
+      "type": "object",
+      "required": ["id", "text", "box"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^p[1-9][0-9]*-w[1-9][0-9]*$" },
+        "text": { "type": "string" },
+        "box": { "$ref": "#/$defs/box" }
+      },
+      "additionalProperties": false
+    },
+    "line": {
+      "type": "object",
+      "required": ["id", "text", "wordIds", "box"],
+      "properties": {
+        "id": { "type": "string" },
+        "text": { "type": "string" },
+        "wordIds": { "type": "array", "items": { "type": "string" } },
+        "box": { "$ref": "#/$defs/box" }
+      },
+      "additionalProperties": false
+    },
+    "page": {
+      "type": "object",
+      "required": ["number", "width", "height", "lines", "words", "visualRegions"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "lines": { "type": "array", "items": { "$ref": "#/$defs/line" } },
+        "words": { "type": "array", "items": { "$ref": "#/$defs/word" } },
+        "visualRegions": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

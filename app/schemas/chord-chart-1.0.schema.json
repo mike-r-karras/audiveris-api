@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://notestream.app/schemas/chord-chart-1.0.schema.json",
+  "title": "Notestream Canonical Chord Chart",
+  "type": "object",
+  "required": ["schemaVersion", "sourceFormat", "metadata", "sections", "warnings"],
+  "properties": {
+    "schemaVersion": { "const": "chord-chart-1.0" },
+    "sourceFormat": { "const": "pdf-chord-chart" },
+    "metadata": {
+      "type": "object",
+      "required": ["title", "sheetType", "timeSignature"],
+      "properties": {
+        "title": { "type": "string" },
+        "sheetType": { "const": "chord-lyrics" },
+        "timeSignature": {
+          "type": "array",
+          "prefixItems": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "integer", "enum": [1, 2, 4, 8, 16, 32] }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "instrument": { "type": "string" },
+        "instrumentInference": { "$ref": "#/$defs/inference" }
+      },
+      "additionalProperties": true
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "measures"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "label": { "type": "string" },
+          "measures": { "type": "array", "items": { "$ref": "#/$defs/measure" } }
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": { "type": "array", "items": { "type": "object" } }
+  },
+  "$defs": {
+    "beatPosition": {
+      "type": "object",
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": { "type": "integer", "minimum": 0 },
+        "denominator": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "sourceRef": {
+      "type": "object",
+      "required": ["page", "wordIds"],
+      "properties": {
+        "page": { "type": "integer", "minimum": 1 },
+        "wordIds": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "inference": {
+      "type": "object",
+      "required": ["confidence", "evidence"],
+      "properties": {
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "chord": {
+      "type": "object",
+      "required": ["id", "beat", "symbol", "printed", "sourceRef"],
+      "properties": {
+        "id": { "type": "string" },
+        "beat": { "$ref": "#/$defs/beatPosition" },
+        "symbol": { "type": "string" },
+        "printed": { "type": "boolean" },
+        "sourceRef": { "$ref": "#/$defs/sourceRef" },
+        "inference": { "$ref": "#/$defs/inference" }
+      },
+      "additionalProperties": false
+    },
+    "lyricCue": {
+      "type": "object",
+      "required": ["id", "beat", "text", "sourceRef", "inference"],
+      "properties": {
+        "id": { "type": "string" },
+        "beat": { "$ref": "#/$defs/beatPosition" },
+        "text": { "type": "string", "minLength": 1 },
+        "role": { "enum": ["normal", "pickup"] },
+        "sourceRef": { "$ref": "#/$defs/sourceRef" },
+        "inference": { "$ref": "#/$defs/inference" }
+      },
+      "additionalProperties": false
+    },
+    "measure": {
+      "type": "object",
+      "required": ["id", "number", "beats", "effectiveChord", "chords", "lyricCues"],
+      "properties": {
+        "id": { "type": "string" },
+        "number": { "type": "integer", "minimum": 1 },
+        "beats": { "type": "integer", "minimum": 1 },
+        "effectiveChord": { "type": "string" },
+        "chords": { "type": "array", "items": { "$ref": "#/$defs/chord" } },
+        "lyricCues": { "type": "array", "items": { "$ref": "#/$defs/lyricCue" } },
+        "sourceRef": { "$ref": "#/$defs/sourceRef" },
+        "inference": { "$ref": "#/$defs/inference" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

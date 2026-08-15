@@ -14,6 +14,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app, jobs, run_audiveris, ConversionJob
+from pdf_preflight import PreflightResult, classify_evidence
+from pdf_source_layout import parse_bbox_layout
 
 client = TestClient(app)
 
@@ -131,6 +133,136 @@ def test_create_conversion():
         assert job_id in jobs
         assert jobs[job_id].status in ("queued", "processing", "completed")
         mock_run.assert_called_once()
+
+
+def test_preflight_detects_ukulele_chord_lyric_chart():
+    text = """
+    Stand By Me
+    A . . . | A . . . | F#m . . . | F#m . . .
+    When the night has come and the land is dark
+    And the moon is the only light we'll see
+    San Jose Ukulele Club
+    """
+
+    result = classify_evidence(text=text, staff_systems=0)
+
+    assert result.sheet_type == "chord-lyrics"
+    assert result.confidence >= 0.8
+    assert result.instrument_candidates[0].instrument == "ukulele"
+    assert any("beat dots" in item for item in result.evidence)
+
+
+def test_preflight_prefers_standard_notation_when_staves_are_present():
+    result = classify_evidence(
+        text="Amazing Grace how sweet the sound",
+        staff_systems=3,
+    )
+
+    assert result.sheet_type == "standard-notation"
+    assert result.confidence >= 0.9
+
+
+def test_preflight_keeps_weak_evidence_unknown():
+    result = classify_evidence(text="Untitled document", staff_systems=0)
+
+    assert result.sheet_type == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_run_audiveris_skips_omr_for_chord_lyric_sheet():
+    job_id = "test-chord-sheet-job-id"
+    jobs[job_id] = ConversionJob(
+        jobId=job_id,
+        status="queued",
+        progress=0,
+        stage="queued",
+        message="Conversion queued",
+    )
+    detected = PreflightResult(
+        sheet_type="chord-lyrics",
+        confidence=0.94,
+        evidence=["Chord symbols and repeated beat dots share rows"],
+        instrument_candidates=[],
+        extracted_text=True,
+        staff_systems=0,
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        input_path = tmp_path / "chart.pdf"
+        input_path.write_bytes(b"%PDF-1.4 dummy")
+
+        with (
+            patch("main.classify_pdf", return_value=detected),
+            patch(
+                "main.extract_pdf_source_layout",
+                return_value={"schemaVersion": "pdf-source-layout-1.0"},
+            ),
+            patch("asyncio.create_subprocess_exec") as subprocess_mock,
+        ):
+            await run_audiveris(job_id, input_path, tmp_path / "output")
+
+    subprocess_mock.assert_not_called()
+    assert jobs[job_id].status == "failed"
+    assert jobs[job_id].preflight["sheetType"] == "chord-lyrics"
+    assert Path(jobs[job_id].sourceLayoutPath).exists()
+    assert "before OMR" in jobs[job_id].error
+
+
+def test_parse_bbox_layout_preserves_stable_word_geometry():
+    bbox = b"""<?xml version="1.0"?>
+    <html xmlns="http://www.w3.org/1999/xhtml">
+      <head><meta name="Author" content="Gillian"/></head>
+      <body><doc><page width="612" height="792"><flow><block
+        xMin="45" yMin="148" xMax="120" yMax="160"><line
+        xMin="45" yMin="148" xMax="120" yMax="160">
+        <word xMin="45" yMin="148" xMax="53" yMax="160">A</word>
+        <word xMin="60" yMin="148" xMax="63" yMax="160">.</word>
+      </line></block></flow></page></doc></body>
+    </html>"""
+
+    layout = parse_bbox_layout(bbox, source_filename="chart.pdf")
+
+    assert layout["schemaVersion"] == "pdf-source-layout-1.0"
+    assert layout["metadata"]["Author"] == "Gillian"
+    page = layout["pages"][0]
+    assert page["width"] == 612
+    assert page["lines"][0]["wordIds"] == ["p1-w1", "p1-w2"]
+    assert page["words"][0] == {
+        "id": "p1-w1",
+        "text": "A",
+        "box": {"xMin": 45.0, "yMin": 148.0, "xMax": 53.0, "yMax": 160.0},
+    }
+
+
+def test_stand_by_me_golden_fixture_encodes_pickup_and_lyric_beats():
+    fixture_path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "stand-by-me-pickup.golden.json"
+    )
+    chart = json.loads(fixture_path.read_text(encoding="utf-8"))
+    measures = {
+        measure["number"]: measure
+        for section in chart["sections"]
+        for measure in section["measures"]
+    }
+
+    assert chart["schemaVersion"] == "chord-chart-1.0"
+    assert measures[8]["effectiveChord"] == "A"
+    assert measures[8]["chords"] == []
+    assert measures[8]["lyricCues"][0]["text"] == "When the"
+    assert measures[8]["lyricCues"][0]["beat"] == {
+        "numerator": 3,
+        "denominator": 1,
+    }
+    assert [(cue["text"], cue["beat"]["numerator"]) for cue in measures[9]["lyricCues"]] == [
+        ("night", 0),
+        ("has", 3),
+    ]
+    assert measures[10]["chords"] == []
+    assert measures[10]["effectiveChord"] == "A"
+    assert measures[10]["lyricCues"][0]["text"] == "come,"
 
 
 @pytest.mark.asyncio

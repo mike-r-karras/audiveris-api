@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "chord-chart-1.0",
+  "sourceFormat": "pdf-chord-chart",
+  "metadata": {
+    "title": "Stand By Me",
+    "sheetType": "chord-lyrics",
+    "timeSignature": [4, 4],
+    "instrument": "ukulele",
+    "instrumentInference": {
+      "confidence": 0.99,
+      "evidence": ["Four-string chord diagrams are printed on the page", "The footer names the San Jose Ukulele Club"]
+    },
+    "sourceFilename": "Stand By Me (original key of A).pdf",
+    "fixtureScope": "Intro through the first two full verse measures"
+  },
+  "sections": [
+    {
+      "id": "intro",
+      "label": "Intro",
+      "measures": [
+        {
+          "id": "m1", "number": 1, "beats": 4, "effectiveChord": "A",
+          "chords": [{"id": "m1-c1", "beat": {"numerator": 0, "denominator": 1}, "symbol": "A", "printed": true, "sourceRef": {"page": 1, "wordIds": ["p1-w17"]}}],
+          "lyricCues": [], "sourceRef": {"page": 1, "wordIds": ["p1-w17", "p1-w18", "p1-w19", "p1-w20"]}
+        },
+        {
+          "id": "m2", "number": 2, "beats": 4, "effectiveChord": "A", "chords": [], "lyricCues": [],
+          "sourceRef": {"page": 1, "wordIds": ["p1-w22", "p1-w23", "p1-w24", "p1-w25"]}
+        },
+        {
+          "id": "m3", "number": 3, "beats": 4, "effectiveChord": "F#m",
+          "chords": [{"id": "m3-c1", "beat": {"numerator": 0, "denominator": 1}, "symbol": "F#m", "printed": true, "sourceRef": {"page": 1, "wordIds": ["p1-w26"]}}],
+          "lyricCues": [], "sourceRef": {"page": 1, "wordIds": ["p1-w26", "p1-w27", "p1-w28", "p1-w29"]}
+        },
+        {
+          "id": "m4", "number": 4, "beats": 4, "effectiveChord": "F#m", "chords": [], "lyricCues": [],
+          "sourceRef": {"page": 1, "wordIds": ["p1-w31", "p1-w32", "p1-w33", "p1-w34"]}
+        },
+        {
+          "id": "m5", "number": 5, "beats": 4, "effectiveChord": "D",
+          "chords": [{"id": "m5-c1", "beat": {"numerator": 0, "denominator": 1}, "symbol": "D", "printed": true, "sourceRef": {"page": 1, "wordIds": ["p1-w35"]}}],
+          "lyricCues": [], "sourceRef": {"page": 1, "wordIds": ["p1-w35", "p1-w36", "p1-w37", "p1-w38"]}
+        },
+        {
+          "id": "m6", "number": 6, "beats": 4, "effectiveChord": "E",
+          "chords": [{"id": "m6-c1", "beat": {"numerator": 0, "denominator": 1}, "symbol": "E", "printed": true, "sourceRef": {"page": 1, "wordIds": ["p1-w40"]}}],
+          "lyricCues": [], "sourceRef": {"page": 1, "wordIds": ["p1-w40", "p1-w41", "p1-w42", "p1-w43"]}
+        },
+        {
+          "id": "m7", "number": 7, "beats": 4, "effectiveChord": "A",
+          "chords": [{"id": "m7-c1", "beat": {"numerator": 0, "denominator": 1}, "symbol": "A", "printed": true, "sourceRef": {"page": 1, "wordIds": ["p1-w45"]}}],
+          "lyricCues": [], "sourceRef": {"page": 1, "wordIds": ["p1-w45", "p1-w46", "p1-w47", "p1-w48"]}
+        },
+        {
+          "id": "m8", "number": 8, "beats": 4, "effectiveChord": "A", "chords": [],
+          "lyricCues": [{
+            "id": "m8-l1", "beat": {"numerator": 3, "denominator": 1}, "text": "When the", "role": "pickup",
+            "sourceRef": {"page": 1, "wordIds": ["p1-w72", "p1-w73"]},
+            "inference": {"confidence": 0.99, "evidence": ["The phrase aligns with the trailing beat before the next printed A chord"]}
+          }],
+          "sourceRef": {"page": 1, "wordIds": ["p1-w50", "p1-w51", "p1-w52", "p1-w53"]}
+        }
+      ]
+    },
+    {
+      "id": "verse-1",
+      "label": "Verse 1",
+      "measures": [
+        {
+          "id": "m9", "number": 9, "beats": 4, "effectiveChord": "A",
+          "chords": [{"id": "m9-c1", "beat": {"numerator": 0, "denominator": 1}, "symbol": "A", "printed": true, "sourceRef": {"page": 1, "wordIds": ["p1-w54"]}}],
+          "lyricCues": [
+            {"id": "m9-l1", "beat": {"numerator": 0, "denominator": 1}, "text": "night", "role": "normal", "sourceRef": {"page": 1, "wordIds": ["p1-w74"]}, "inference": {"confidence": 0.99, "evidence": ["The word aligns with beat one and the printed A chord"]}},
+            {"id": "m9-l2", "beat": {"numerator": 3, "denominator": 1}, "text": "has", "role": "normal", "sourceRef": {"page": 1, "wordIds": ["p1-w75"]}, "inference": {"confidence": 0.99, "evidence": ["The word aligns with the fourth beat anchor"]}}
+          ],
+          "sourceRef": {"page": 1, "wordIds": ["p1-w54", "p1-w55", "p1-w56", "p1-w57"]}
+        },
+        {
+          "id": "m10", "number": 10, "beats": 4, "effectiveChord": "A", "chords": [],
+          "lyricCues": [{"id": "m10-l1", "beat": {"numerator": 0, "denominator": 1}, "text": "come,", "role": "normal", "sourceRef": {"page": 1, "wordIds": ["p1-w76"]}, "inference": {"confidence": 0.99, "evidence": ["The word follows the barline and aligns with the next measure downbeat"]}}],
+          "sourceRef": {"page": 1, "wordIds": ["p1-w59", "p1-w60", "p1-w61", "p1-w62"]}
+        }
+      ]
+    }
+  ],
+  "warnings": []
+}

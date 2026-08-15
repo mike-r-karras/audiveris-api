@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import shutil
 import tempfile
@@ -13,6 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import musicxml_converter
+from pdf_preflight import PreflightResult, classify_pdf
+from pdf_source_layout import extract_pdf_source_layout
 
 app = FastAPI()
 
@@ -38,6 +41,8 @@ class ConversionJob(BaseModel):
     message: str
     resultPath: str | None = None
     error: str | None = None
+    preflight: dict[str, object] | None = None
+    sourceLayoutPath: str | None = None
 
 
 jobs: dict[str, ConversionJob] = {}
@@ -66,6 +71,48 @@ async def run_audiveris(job_id: str, input_path: Path, output_dir: Path) -> None
             stage="preparing",
             message="Preparing uploaded score",
         )
+
+        update_job(
+            job_id,
+            progress=12,
+            stage="preflighting",
+            message="Classifying uploaded PDF",
+        )
+
+        loop = asyncio.get_running_loop()
+        preflight: PreflightResult = await loop.run_in_executor(
+            None,
+            classify_pdf,
+            input_path,
+        )
+        jobs[job_id].preflight = preflight.to_dict()
+
+        if preflight.sheet_type == "chord-lyrics" and preflight.confidence >= 0.8:
+            update_job(
+                job_id,
+                progress=18,
+                stage="extracting-source-layout",
+                message="Preserving chord-chart text geometry",
+            )
+            source_layout = await loop.run_in_executor(
+                None,
+                extract_pdf_source_layout,
+                input_path,
+            )
+            app_output_dir = Path(__file__).parent / "output"
+            app_output_dir.mkdir(parents=True, exist_ok=True)
+            source_layout_path = (
+                app_output_dir / f"{input_path.stem}.source-layout.json"
+            )
+            source_layout_path.write_text(
+                json.dumps(source_layout, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            jobs[job_id].sourceLayoutPath = str(source_layout_path)
+            raise RuntimeError(
+                "Chord/lyric sheet detected before OMR; "
+                "the chord-chart parser is not available yet"
+            )
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
