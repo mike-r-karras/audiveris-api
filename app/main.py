@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import musicxml_converter
+from chord_chart_parser import parse_chord_chart
 from pdf_preflight import PreflightResult, classify_pdf
 from pdf_source_layout import extract_pdf_source_layout
 
@@ -109,10 +110,42 @@ async def run_audiveris(job_id: str, input_path: Path, output_dir: Path) -> None
                 encoding="utf-8",
             )
             jobs[job_id].sourceLayoutPath = str(source_layout_path)
-            raise RuntimeError(
-                "Chord/lyric sheet detected before OMR; "
-                "the chord-chart parser is not available yet"
+
+            instrument_candidate = (
+                preflight.instrument_candidates[0]
+                if preflight.instrument_candidates
+                else None
             )
+            chart = await loop.run_in_executor(
+                None,
+                lambda: parse_chord_chart(
+                    source_layout,
+                    instrument=(
+                        instrument_candidate.instrument
+                        if instrument_candidate
+                        else None
+                    ),
+                    instrument_evidence=(
+                        instrument_candidate.evidence
+                        if instrument_candidate
+                        else None
+                    ),
+                ),
+            )
+            chart_path = app_output_dir / f"{input_path.stem}.ezs"
+            chart_path.write_text(
+                json.dumps(chart, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            jobs[job_id].resultPath = str(chart_path)
+            update_job(
+                job_id,
+                progress=100,
+                stage="completed",
+                message="Chord-chart conversion completed",
+                status="completed",
+            )
+            return
 
         output_dir.mkdir(parents=True, exist_ok=True)
 

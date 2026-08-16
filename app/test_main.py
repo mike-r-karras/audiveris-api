@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app, jobs, run_audiveris, ConversionJob
+from chord_chart_parser import parse_chord_chart
 from pdf_preflight import PreflightResult, classify_evidence
 from pdf_source_layout import parse_bbox_layout
 
@@ -169,7 +170,7 @@ def test_preflight_keeps_weak_evidence_unknown():
 
 
 @pytest.mark.asyncio
-async def test_run_audiveris_skips_omr_for_chord_lyric_sheet():
+async def test_run_audiveris_routes_chord_sheet_without_omr():
     job_id = "test-chord-sheet-job-id"
     jobs[job_id] = ConversionJob(
         jobId=job_id,
@@ -203,10 +204,14 @@ async def test_run_audiveris_skips_omr_for_chord_lyric_sheet():
             await run_audiveris(job_id, input_path, tmp_path / "output")
 
     subprocess_mock.assert_not_called()
-    assert jobs[job_id].status == "failed"
+    assert jobs[job_id].status == "completed"
     assert jobs[job_id].preflight["sheetType"] == "chord-lyrics"
     assert Path(jobs[job_id].sourceLayoutPath).exists()
-    assert "before OMR" in jobs[job_id].error
+    assert Path(jobs[job_id].resultPath).exists()
+    assert jobs[job_id].error is None
+    response = client.get(f"/conversions/{job_id}/result")
+    assert response.status_code == 200
+    assert response.json()["schemaVersion"] == "chord-chart-1.0"
 
 
 def test_parse_bbox_layout_preserves_stable_word_geometry():
@@ -263,6 +268,130 @@ def test_stand_by_me_golden_fixture_encodes_pickup_and_lyric_beats():
     assert measures[10]["chords"] == []
     assert measures[10]["effectiveChord"] == "A"
     assert measures[10]["lyricCues"][0]["text"] == "come,"
+
+
+def test_spatial_parser_matches_stand_by_me_pickup_fixture():
+    words = []
+
+    def add(word_id, text, x, y):
+        words.append({
+            "id": word_id,
+            "text": text,
+            "box": {"xMin": x, "yMin": y, "xMax": x + max(3, len(text) * 6), "yMax": y + 11},
+        })
+
+    intro = [
+        ("p1-w16", "Intro:"), ("p1-w17", "A"), ("p1-w18", "."), ("p1-w19", "."), ("p1-w20", "."),
+        ("p1-w21", "|"), ("p1-w22", "."), ("p1-w23", "."), ("p1-w24", "."), ("p1-w25", "."),
+        ("p1-w26", "|F#m"), ("p1-w27", "."), ("p1-w28", "."), ("p1-w29", "."),
+        ("p1-w30", "|"), ("p1-w31", "."), ("p1-w32", "."), ("p1-w33", "."), ("p1-w34", "."),
+        ("p1-w35", "|D"), ("p1-w36", "."), ("p1-w37", "."), ("p1-w38", "."),
+        ("p1-w39", "|"), ("p1-w40", "E"), ("p1-w41", "."), ("p1-w42", "."), ("p1-w43", "."),
+        ("p1-w44", "|"), ("p1-w45", "A"), ("p1-w46", "."), ("p1-w47", "."), ("p1-w48", "."),
+        ("p1-w49", "|"), ("p1-w50", "."), ("p1-w51", "."), ("p1-w52", "."),
+    ]
+    for index, (word_id, text) in enumerate(intro):
+        add(word_id, text, 45 + index * 10, 149)
+
+    for word_id, text, x in [
+        ("p1-w53", ".", 45), ("p1-w54", "A", 108), ("p1-w55", ".", 126),
+        ("p1-w56", ".", 136), ("p1-w57", ".", 146), ("p1-w58", "|", 159),
+        ("p1-w59", ".", 172), ("p1-w60", ".", 196), ("p1-w61", ".", 206),
+        ("p1-w62", ".", 219), ("p1-w63", "|", 226), ("p1-w64", "F#m", 232),
+        ("p1-w65", ".", 263), ("p1-w66", ".", 313), ("p1-w67", ".", 333),
+    ]:
+        add(word_id, text, x, 176)
+
+    for word_id, text, x in [
+        ("p1-w72", "When", 45), ("p1-w73", "the", 79), ("p1-w74", "night", 99),
+        ("p1-w75", "has", 142), ("p1-w76", "come,", 165),
+    ]:
+        add(word_id, text, x, 190)
+
+    layout = {
+        "sourceFilename": "Stand By Me (original key of A).pdf",
+        "pages": [{"number": 1, "words": words}],
+    }
+    chart = parse_chord_chart(layout, instrument="ukulele")
+    measures = {
+        measure["number"]: measure
+        for section in chart["sections"]
+        for measure in section["measures"]
+    }
+
+    assert measures[8]["effectiveChord"] == "A"
+    assert measures[8]["lyricCues"][0]["text"] == "When the"
+    assert measures[8]["lyricCues"][0]["role"] == "pickup"
+    assert [(cue["text"], cue["beat"]["numerator"]) for cue in measures[9]["lyricCues"]] == [
+        ("night", 0), ("has", 3)
+    ]
+    assert measures[10]["effectiveChord"] == "A"
+    assert measures[10]["chords"] == []
+    assert measures[10]["lyricCues"][0]["text"] == "come,"
+
+
+def test_spatial_parser_rejoins_split_chord_suffixes():
+    words = []
+    for index, text in enumerate(["|", "C", "\\", "C", "7\\", "G", "m", ".", "|"]):
+        words.append({
+            "id": f"p1-w{index + 1}",
+            "text": text,
+            "box": {
+                "xMin": 40 + index * 12,
+                "yMin": 100,
+                "xMax": 48 + index * 12,
+                "yMax": 112,
+            },
+        })
+
+    chart = parse_chord_chart({
+        "sourceFilename": "split-suffixes.pdf",
+        "pages": [{"number": 1, "words": words}],
+    })
+    measure = chart["sections"][0]["measures"][0]
+
+    assert [chord["symbol"] for chord in measure["chords"]] == ["C", "C7", "Gm"]
+    assert measure["chords"][1]["sourceRef"]["wordIds"] == ["p1-w4", "p1-w5"]
+    assert measure["chords"][2]["sourceRef"]["wordIds"] == ["p1-w6", "p1-w7"]
+
+
+def test_spatial_parser_keeps_lyrics_on_section_label_row():
+    words = [
+        {
+            "id": "p1-w1",
+            "text": text,
+            "box": {
+                "xMin": x,
+                "yMin": y,
+                "xMax": x + max(3, len(text) * 6),
+                "yMax": y + 11,
+            },
+        }
+        for text, x, y in [
+            ("|", 40, 100),
+            ("A", 70, 100),
+            (".", 90, 100),
+            (".", 120, 100),
+            (".", 150, 100),
+            ("|", 180, 100),
+            ("Chorus:", 40, 113),
+            ("So", 50, 113),
+            ("dar-lin’", 90, 113),
+        ]
+    ]
+    for index, word in enumerate(words, start=1):
+        word["id"] = f"p1-w{index}"
+
+    chart = parse_chord_chart({
+        "sourceFilename": "section-lyrics.pdf",
+        "pages": [{"number": 1, "words": words}],
+    })
+    section = chart["sections"][0]
+    measure = section["measures"][0]
+
+    assert section["label"] == "Chorus"
+    assert [cue["text"] for cue in measure["lyricCues"]] == ["So", "dar-lin’"]
+    assert all("Chorus:" not in cue["text"] for cue in measure["lyricCues"])
 
 
 @pytest.mark.asyncio
