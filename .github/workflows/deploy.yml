@@ -48,7 +48,7 @@ jobs:
           region: ${{ vars.GCP_REGION }}
           source: .
           flags: >-
-            --allow-unauthenticated
+            --no-invoker-iam-check
             --cpu=2
             --memory=4Gi
             --timeout=3600
