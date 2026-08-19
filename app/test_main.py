@@ -106,6 +106,21 @@ def test_health():
     assert response.json()["status"] == "ok"
 
 
+def test_deployed_frontend_cors_preflight():
+    response = client.options(
+        "/conversions",
+        headers={
+            "Origin": "https://notestream.mike-r-karras.workers.dev",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == (
+        "https://notestream.mike-r-karras.workers.dev"
+    )
+
+
 def test_get_conversion_not_found():
     response = client.get("/conversions/nonexistent-id")
     assert response.status_code == 404
