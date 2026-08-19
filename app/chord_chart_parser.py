@@ -247,13 +247,17 @@ def _build_measures(
             return
         number = len(measures) + 1
         printed = [anchor for anchor in current_anchors if anchor.kind == "chord"]
-        if printed:
-            current_chord = printed[0].symbol or current_chord
+        opening_anchor = current_anchors[0]
+        opening_chord = (
+            opening_anchor.symbol
+            if opening_anchor.kind == "chord" and opening_anchor.symbol
+            else current_chord
+        )
         measure = {
             "id": f"m{number}",
             "number": number,
             "beats": BEATS_PER_MEASURE,
-            "effectiveChord": current_chord,
+            "effectiveChord": opening_chord,
             "chords": [],
             "lyricCues": [],
             "sourceRef": {
@@ -282,6 +286,8 @@ def _build_measures(
                     }
                 )
         measures.append(measure)
+        if printed:
+            current_chord = printed[-1].symbol or current_chord
         current_anchors = []
 
     for row in beat_rows:

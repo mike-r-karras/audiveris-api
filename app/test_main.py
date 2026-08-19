@@ -414,6 +414,37 @@ def test_spatial_parser_rejoins_accidental_and_lowercase_quality_fragments():
     ]
 
 
+def test_spatial_parser_carries_opening_chord_until_a_mid_measure_change():
+    words = []
+    texts = [
+        "|", "G", ".", ".", ".", "|",
+        ".", ".", "Dm", ".", "|",
+        ".", ".", ".", ".", "|",
+    ]
+    for index, text in enumerate(texts):
+        words.append({
+            "id": f"p1-w{index + 1}",
+            "text": text,
+            "box": {
+                "xMin": 40 + index * 12,
+                "yMin": 100,
+                "xMax": 48 + index * 12,
+                "yMax": 112,
+            },
+        })
+
+    chart = parse_chord_chart({
+        "sourceFilename": "mid-measure-change.pdf",
+        "pages": [{"number": 1, "words": words}],
+    })
+    measures = chart["sections"][0]["measures"]
+
+    assert measures[1]["effectiveChord"] == "G"
+    assert measures[1]["chords"][0]["beat"] == {"numerator": 2, "denominator": 1}
+    assert measures[1]["chords"][0]["symbol"] == "Dm"
+    assert measures[2]["effectiveChord"] == "Dm"
+
+
 def test_spatial_parser_rejoins_split_flat_and_lowercase_slash_bass():
     words = []
     for index, text in enumerate(
