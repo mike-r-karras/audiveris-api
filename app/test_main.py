@@ -163,6 +163,23 @@ def test_preflight_prefers_standard_notation_when_staves_are_present():
     assert result.confidence >= 0.9
 
 
+def test_preflight_strong_chord_chart_evidence_overrides_one_false_staff():
+    text = """
+    I Will
+    C . . . | Am . . . | F . . . | G7 . . .
+    C . . . | Am . . . | Dm . . . | G7 . . .
+    Who knows how long I've loved you
+    You know I love you still
+    Ukulele
+    """
+
+    result = classify_evidence(text=text, staff_systems=1)
+
+    assert result.sheet_type == "chord-lyrics"
+    assert result.confidence >= 0.8
+    assert any("five-line staff" in item for item in result.evidence)
+
+
 def test_preflight_keeps_weak_evidence_unknown():
     result = classify_evidence(text="Untitled document", staff_systems=0)
 
@@ -392,6 +409,64 @@ def test_spatial_parser_keeps_lyrics_on_section_label_row():
     assert section["label"] == "Chorus"
     assert [cue["text"] for cue in measure["lyricCues"]] == ["So", "dar-lin’"]
     assert all("Chorus:" not in cue["text"] for cue in measure["lyricCues"])
+
+
+def test_spatial_parser_keeps_leading_words_near_measure_downbeats():
+    words = []
+
+    def add(word_id, text, x, y):
+        words.append({
+            "id": word_id,
+            "text": text,
+            "box": {
+                "xMin": x,
+                "yMin": y,
+                "xMax": x + max(3, len(text) * 6),
+                "yMax": y + 11,
+            },
+        })
+
+    for word_id, text, x in [
+        ("p1-w1", "Am", 31.5),
+        ("p1-w2", ".", 85.7),
+        ("p1-w3", ".", 132.3),
+        ("p1-w4", ".", 155.7),
+        ("p1-w5", "|", 171.3),
+        ("p1-w6", "E7", 282.6),
+        ("p1-w7", ".", 329.6),
+        ("p1-w8", ".", 376.4),
+        ("p1-w9", ".", 403.6),
+        ("p1-w10", "|", 436.8),
+    ]:
+        add(word_id, text, x, 642.5)
+
+    for word_id, text, x in [
+        ("p1-w11", "Her", 54.9),
+        ("p1-w12", "mind", 81.3),
+        ("p1-w13", "is", 115.5),
+        ("p1-w14", "Tiffany-twisted", 129.5),
+        ("p1-w15", "She", 299.2),
+        ("p1-w16", "got", 327.9),
+        ("p1-w17", "the", 349.6),
+        ("p1-w18", "Mercedes", 373.0),
+        ("p1-w19", "bends", 447.0),
+    ]:
+        add(word_id, text, x, 656.8)
+
+    chart = parse_chord_chart({
+        "sourceFilename": "downbeat-leading-lyrics.pdf",
+        "pages": [{"number": 1, "words": words}],
+    })
+    measures = chart["sections"][0]["measures"]
+
+    assert " ".join(cue["text"] for cue in measures[0]["lyricCues"]) == (
+        "Her mind is Tiffany-twisted"
+    )
+    assert " ".join(cue["text"] for cue in measures[1]["lyricCues"]) == (
+        "She got the Mercedes bends"
+    )
+    assert measures[0]["lyricCues"][0]["sourceRef"]["wordIds"] == ["p1-w11"]
+    assert measures[1]["lyricCues"][0]["sourceRef"]["wordIds"] == ["p1-w15"]
 
 
 @pytest.mark.asyncio

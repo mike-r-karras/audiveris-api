@@ -12,6 +12,7 @@ from pdf_preflight import CHORD_TOKEN
 EXACT_CHORD = re.compile(rf"^(?:{CHORD_TOKEN.pattern})$")
 BEATS_PER_MEASURE = 4
 LYRIC_ANCHOR_TOLERANCE = 14.0
+DOWNBEAT_LYRIC_TOLERANCE = 30.0
 
 
 @dataclass(frozen=True)
@@ -312,9 +313,15 @@ def _align_lyrics(rows: list[GeometricRow], beat_rows: list[GeometricRow]) -> No
                 and word.x <= anchor.token.x
                 and anchor_distance <= 30.0
             )
+            is_downbeat_leading_word = (
+                anchor.beat == 0
+                and word.text[:1].isupper()
+                and anchor_distance <= DOWNBEAT_LYRIC_TOLERANCE
+            )
             if anchor.measure is not None and (
                 anchor_distance <= LYRIC_ANCHOR_TOLERANCE
                 or is_leading_section_word
+                or is_downbeat_leading_word
             ):
                 if (
                     placed

@@ -113,7 +113,12 @@ def classify_evidence(*, text: str, staff_systems: int) -> PreflightResult:
             f"Detected {staff_systems} conventional five-line staff system(s)"
         )
 
-    if chord_score >= 6 and staff_systems == 0:
+    # A chord chart can contain one long ruled or diagram area that resembles a
+    # five-line staff at preflight resolution. Strong, independent chord-row,
+    # beat-dot, lyric, and instrument evidence should win over that single
+    # likely false positive; multiple detected systems still route to OMR.
+    strong_chord_chart = chord_score >= 9 and staff_systems <= 1
+    if (chord_score >= 6 and staff_systems == 0) or strong_chord_chart:
         confidence = min(0.99, 0.72 + (chord_score - 6) * 0.045)
         return PreflightResult(
             "chord-lyrics",
