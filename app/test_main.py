@@ -387,6 +387,34 @@ def test_spatial_parser_rejoins_split_chord_suffixes():
     assert measure["chords"][2]["sourceRef"]["wordIds"] == ["p1-w6", "p1-w7"]
 
 
+def test_spatial_parser_rejoins_split_flat_and_lowercase_slash_bass():
+    words = []
+    for index, text in enumerate(
+        ["|", "A", "m/c", ".", ".", ".", "|", "B", "b", ".", ".", ".", "|"]
+    ):
+        words.append({
+            "id": f"p1-w{index + 1}",
+            "text": text,
+            "box": {
+                "xMin": 40 + index * 12,
+                "yMin": 100,
+                "xMax": 48 + index * 12,
+                "yMax": 112,
+            },
+        })
+
+    chart = parse_chord_chart({
+        "sourceFilename": "split-flat-and-slash.pdf",
+        "pages": [{"number": 1, "words": words}],
+    })
+    measures = chart["sections"][0]["measures"]
+
+    assert measures[0]["effectiveChord"] == "Am/C"
+    assert measures[0]["sourceRef"]["wordIds"][:2] == ["p1-w2", "p1-w3"]
+    assert measures[1]["effectiveChord"] == "Bb"
+    assert measures[1]["sourceRef"]["wordIds"][:2] == ["p1-w8", "p1-w9"]
+
+
 def test_spatial_parser_keeps_lyrics_on_section_label_row():
     words = [
         {

@@ -160,7 +160,17 @@ def _split_word(word: dict[str, Any], page: int) -> list[SourceToken]:
     return result
 
 
-CHORD_SUFFIX = re.compile(r"^(?:maj|min|m|dim|aug|sus|add)?\d*(?:/[A-G](?:#|b)?)?$")
+CHORD_SUFFIX = re.compile(
+    r"^(?:b|(?:maj|min|m|dim|aug|sus|add)?\d*(?:/[A-Ga-g](?:#|b)?)?)$"
+)
+
+
+def _normalize_chord_symbol(symbol: str) -> str:
+    """Normalize case that is musically insignificant in a slash bass."""
+    if "/" not in symbol:
+        return symbol
+    chord, bass = symbol.rsplit("/", 1)
+    return f"{chord}/{bass[:1].upper()}{bass[1:]}"
 
 
 def _coalesce_chord_suffixes(tokens: list[SourceToken]) -> list[SourceToken]:
@@ -176,7 +186,7 @@ def _coalesce_chord_suffixes(tokens: list[SourceToken]) -> list[SourceToken]:
         if EXACT_CHORD.fullmatch(token.text) and index + 1 < len(tokens):
             suffix_token = tokens[index + 1]
             suffix = suffix_token.text.rstrip("\\")
-            candidate = f"{token.text}{suffix}"
+            candidate = _normalize_chord_symbol(f"{token.text}{suffix}")
             if suffix and CHORD_SUFFIX.fullmatch(suffix) and EXACT_CHORD.fullmatch(candidate):
                 merged.append(
                     SourceToken(
