@@ -387,6 +387,33 @@ def test_spatial_parser_rejoins_split_chord_suffixes():
     assert measure["chords"][2]["sourceRef"]["wordIds"] == ["p1-w6", "p1-w7"]
 
 
+def test_spatial_parser_rejoins_accidental_and_lowercase_quality_fragments():
+    words = []
+    texts = ["|", "C", ".", "C", "#", "dim", "7", ".", "|", "."]
+    for index, text in enumerate(texts):
+        words.append({
+            "id": f"p1-w{index + 1}",
+            "text": text,
+            "box": {
+                "xMin": 40 + index * 12,
+                "yMin": 100,
+                "xMax": 48 + index * 12,
+                "yMax": 112,
+            },
+        })
+
+    chart = parse_chord_chart({
+        "sourceFilename": "split-diminished-suffix.pdf",
+        "pages": [{"number": 1, "words": words}],
+    })
+    measure = chart["sections"][0]["measures"][0]
+
+    assert [chord["symbol"] for chord in measure["chords"]] == ["C", "C#dim7"]
+    assert measure["chords"][1]["sourceRef"]["wordIds"] == [
+        "p1-w4", "p1-w5", "p1-w6", "p1-w7"
+    ]
+
+
 def test_spatial_parser_rejoins_split_flat_and_lowercase_slash_bass():
     words = []
     for index, text in enumerate(

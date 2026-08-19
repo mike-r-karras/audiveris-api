@@ -161,8 +161,9 @@ def _split_word(word: dict[str, Any], page: int) -> list[SourceToken]:
 
 
 CHORD_SUFFIX = re.compile(
-    r"^(?:b|(?:maj|min|m|dim|aug|sus|add)?\d*(?:/[A-Ga-g](?:#|b)?)?)$"
+    r"^(?:#|b)?(?:maj|min|m|dim|aug|sus|add)?\d*(?:/[A-Ga-g](?:#|b)?)?$"
 )
+MAX_CHORD_SUFFIX_TOKENS = 3
 
 
 def _normalize_chord_symbol(symbol: str) -> str:
@@ -184,10 +185,23 @@ def _coalesce_chord_suffixes(tokens: list[SourceToken]) -> list[SourceToken]:
     while index < len(tokens):
         token = tokens[index]
         if EXACT_CHORD.fullmatch(token.text) and index + 1 < len(tokens):
-            suffix_token = tokens[index + 1]
-            suffix = suffix_token.text.rstrip("\\")
-            candidate = _normalize_chord_symbol(f"{token.text}{suffix}")
-            if suffix and CHORD_SUFFIX.fullmatch(suffix) and EXACT_CHORD.fullmatch(candidate):
+            best_match: tuple[str, int] | None = None
+            suffix = ""
+            limit = min(len(tokens), index + 1 + MAX_CHORD_SUFFIX_TOKENS)
+            for suffix_end in range(index + 1, limit):
+                suffix += tokens[suffix_end].text.rstrip("\\")
+                candidate = _normalize_chord_symbol(f"{token.text}{suffix}")
+                if (
+                    suffix
+                    and CHORD_SUFFIX.fullmatch(suffix)
+                    and EXACT_CHORD.fullmatch(candidate)
+                ):
+                    best_match = (candidate, suffix_end)
+            if best_match:
+                candidate, suffix_end = best_match
+                source_ids = _token_word_ids(token)
+                for suffix_token in tokens[index + 1 : suffix_end + 1]:
+                    source_ids.extend(_token_word_ids(suffix_token))
                 merged.append(
                     SourceToken(
                         text=candidate,
@@ -195,10 +209,10 @@ def _coalesce_chord_suffixes(tokens: list[SourceToken]) -> list[SourceToken]:
                         page=token.page,
                         x=token.x,
                         y=token.y,
-                        word_ids=tuple(_token_word_ids(token) + _token_word_ids(suffix_token)),
+                        word_ids=tuple(source_ids),
                     )
                 )
-                index += 2
+                index = suffix_end + 1
                 continue
         merged.append(token)
         index += 1
